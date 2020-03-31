@@ -292,6 +292,7 @@ static int memorystatus_list_count = 0;
 #define MEMSTAT_BUCKET_COUNT (JETSAM_PRIORITY_MAX + 1)
 
 typedef struct memstat_bucket {
+	// list是一个列表
     TAILQ_HEAD(, proc) list;
     int count;
 } memstat_bucket_t;
@@ -1864,7 +1865,7 @@ jetsam_current_thread(void)
 	return NULL;
 }
 
-
+// Jetsam相关启动代码
 __private_extern__ void
 memorystatus_init(void)
 {
@@ -1895,6 +1896,9 @@ memorystatus_init(void)
 
 	
 	/* Init buckets */
+	// 初始化优先级数组，共有个MEMSTAT_BUCKET_COUNT数组元素；
+	// MEMSTAT_BUCKET_COUNT为优先级等级数量 "(JETSAM_PRIORITY_MAX + 1)";
+	// 每个数组元素是一个列表，表示相同优先级的进程的列表
 	for (i = 0; i < MEMSTAT_BUCKET_COUNT; i++) {
 		TAILQ_INIT(&memstat_bucket[i].list);
 		memstat_bucket[i].count = 0;
@@ -2052,7 +2056,8 @@ memorystatus_init(void)
 
 	/* Initialize all the jetsam threads */
 	for (i = 0; i < max_jetsam_threads; i++) {
-
+		// 启动线程来维护上述的进程优先级列表，和内存快照列表；
+		// 使用了续体，这个续体是什么？
 		result = kernel_thread_start_priority(memorystatus_thread, NULL, 95 /* MAXPRI_KERNEL */, &jetsam_threads[i].thread);
 		if (result == KERN_SUCCESS) {
 			jetsam_threads[i].inited = FALSE;
@@ -4180,6 +4185,7 @@ memorystatus_act_on_hiwat_processes(uint32_t *errors, uint32_t *hwm_kill, boolea
 	return FALSE;
 }
 
+// 这个函数什么时候会被调用？
 static boolean_t
 memorystatus_act_aggressive(uint32_t cause, os_reason_t jetsam_reason, int *jld_idle_kills, boolean_t *corpse_list_purged, boolean_t *post_snapshot)
 {
@@ -4214,6 +4220,8 @@ memorystatus_act_aggressive(uint32_t cause, os_reason_t jetsam_reason, int *jld_
 		jld_now_msecs = (jld_now_tstamp.tv_sec * 1000);
 
 		proc_list_lock();
+		// 根据过期策略选择某个优先级下的进程列表；
+		// jld_bucket_count为这个进程列表的数量。
 		switch (jetsam_aging_policy) {
 		case kJetsamAgingPolicyLegacy:
 			bucket = &memstat_bucket[JETSAM_PRIORITY_IDLE];
@@ -4238,6 +4246,7 @@ memorystatus_act_aggressive(uint32_t cause, os_reason_t jetsam_reason, int *jld_
 		}
 
 		bucket = &memstat_bucket[JETSAM_PRIORITY_ELEVATED_INACTIVE];
+		// elevated_bucket_count为JETSAM_PRIORITY_ELEVATED_INACTIVE优先级的进程列表数量
 		elevated_bucket_count = bucket->count;
 
 		proc_list_unlock();

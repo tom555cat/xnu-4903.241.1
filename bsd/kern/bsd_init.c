@@ -850,6 +850,7 @@ bsd_init(void)
 	memorystatus_freeze_init();
 #endif
 
+// Jetsam相关启动项
 #if CONFIG_MEMORYSTATUS
 	/* Initialize kernel memory status notifications */
 	bsd_init_kprintf("calling memorystatus_init\n");
