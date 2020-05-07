@@ -4256,6 +4256,15 @@ memorystatus_act_aggressive(uint32_t cause, os_reason_t jetsam_reason, int *jld_
 		 * memorystatus_jld_eval_aggressive_count is a tunable
 		 * memorystatus_jld_eval_aggressive_priority_band_max is a tunable
 		 */
+		// "(jld_now_msecs > (jld_timestamp_msecs + memorystatus_jld_eval_period_msecs))"
+		// 表示一种什么条件？
+		// 第一次执行，肯定能进来，因为一个绝对时间肯定大于相对时间memorystatus_jld_eval_period_msecs;
+		// 然后设置各种变量；
+		// 第二次执行，时间间隔小于memorystatus_jld_eval_period_msecs，如果这时还有jld_bucket_count
+		// 没有杀掉，那么不会进来；【也就是说memorystatus_jld_eval_period_msecs时间之内，不会进入下一个if
+		// 条件中，下一个if条件中会杀后台优先级的进程；也就是说如果jld_bucket_count优先级的进程如果在6s之内
+		// 没有被杀干净的话，是不会碰后台进程的，所以后台进程还是有一个6s的机会窗口】
+		// 如果时间间隔大于memorystatus_jld_eval_period_msecs，会重置一下各种变量；
 		if ( (jld_bucket_count == 0) || 
 		     (jld_now_msecs > (jld_timestamp_msecs + memorystatus_jld_eval_period_msecs))) {
 
