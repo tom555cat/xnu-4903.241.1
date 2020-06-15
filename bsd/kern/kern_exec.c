@@ -859,12 +859,14 @@ exec_mach_imgact(struct image_params *imgp)
 		goto bad;
 	}
 
+    // 这里也会再次进行判断，只有单指令集的binary才能进行内存映射
 	if ((mach_header->magic != MH_MAGIC) &&
 	    (mach_header->magic != MH_MAGIC_64)) {
 		error = -1;
 		goto bad;
 	}
-
+    
+    // 只接受可执行文件的加载
 	if (mach_header->filetype != MH_EXECUTE) {
 		error = -1;
 		goto bad;
@@ -941,6 +943,7 @@ grade:
 	 * new child process.
 	 */
 	if (vfexec) {
+        // 在上层fork、vfork、posix_spawn都可创建进程，vfork不会创建新线程，在此创建
 		imgp->ip_new_thread = fork_create_child(task,
 												NULL,
 												p,
@@ -973,6 +976,8 @@ grade:
 	 * return an error code to the parent process.
 	 */
 
+    // 这里就是加载mach-o，这是返回如果是LOAD_SUCCESS，binary已经映射成可执行内存。
+    // load_machfile函数负责除了mach-o解析之外所有和加载相关的工作。
 	/*
 	 * Actually load the image file we previously decided to load.
 	 */
@@ -1008,6 +1013,7 @@ grade:
 	p->p_cpusubtype = imgp->ip_origcpusubtype;
 	proc_unlock(p);
 
+    // 设置内存映射的操作权限
 	vm_map_set_user_wire_limit(map, p->p_rlimit[RLIMIT_MEMLOCK].rlim_cur);
 
 	/* 
@@ -1376,8 +1382,11 @@ struct execsw {
 	int (*ex_imgact)(struct image_params *);
 	const char *ex_name;
 } execsw[] = {
+    // 单指令集的Mach-O
 	{ exec_mach_imgact,		"Mach-o Binary" },
+    // 多指令集的Mach-O exec_fat_imgact会先进行指令集分解，然后调用exec_mach
 	{ exec_fat_imgact,		"Fat Binary" },
+    // shell脚本
 	{ exec_shell_imgact,		"Interpreter Script" },
 	{ NULL, NULL}
 };
@@ -1496,6 +1505,7 @@ encapsulated_binary:
 		goto bad;
 	}
 	error = -1;
+    // 循环调用execsw相应的格式映射的加载函数进行加载
 	for(i = 0; error == -1 && execsw[i].ex_imgact != NULL; i++) {
 
 		error = (*execsw[i].ex_imgact)(imgp);
@@ -3548,6 +3558,7 @@ __mac_execve(proc_t p, struct __mac_execve_args *uap, int32_t *retval)
 		 * During exec any transition from new_task -> proc is fine, but don't allow
 		 * transition from proc->task, since it will modify old_task.
 		 */
+        // 创建新的进程和新的task
 		imgp->ip_new_thread = fork_create_child(old_task,
 												NULL,
 												p,
@@ -3565,6 +3576,7 @@ __mac_execve(proc_t p, struct __mac_execve_args *uap, int32_t *retval)
 		context.vc_thread = imgp->ip_new_thread;
 	}
 
+    // *调用exec_activate_image*，负责按照binary的格式分发映射内存的函数
 	error = exec_activate_image(imgp);
 	/* thread and task ref returned for vfexec case */
 
@@ -5266,6 +5278,7 @@ load_init_program(proc_t p)
 	}
 #endif
 
+    // init_programs: 在非debug模式下，只加载/sbin/launchd launchd负责进程管理
 	error = ENOENT;
 	for (i = 0; i < sizeof(init_programs)/sizeof(init_programs[0]); i++) {
 		printf("load_init_program: attempting to load %s\n", init_programs[i]);

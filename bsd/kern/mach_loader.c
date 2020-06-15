@@ -359,9 +359,11 @@ load_machfile(
 	} else {
 		ledger_task = task;
 	}
+    // 为当前task分配内存
 	pmap = pmap_create(get_task_ledger(ledger_task),
 			   (vm_map_size_t) 0,
 			   result->is_64bit_addr);
+    // 创建虚拟内存映射空间 这里下面需要进行一下说明
 	map = vm_map_create(pmap,
 			0,
 			vm_compute_max_offset(result->is_64bit_addr),
@@ -391,6 +393,7 @@ load_machfile(
 	}
 #endif
 
+    // 内存设置为不可执行，防止内存溢出漏洞
 	/* Forcibly disallow execution from data pages on even if the arch
 	 * normally permits it. */
 	if ((header->flags & MH_NO_HEAP_EXECUTION) && !(imgp->ip_flags & IMGPF_ALLOW_DATA_EXEC))
@@ -403,10 +406,12 @@ load_machfile(
 		vm_map_get_max_aslr_slide_section(map, &aslr_section_offset, &aslr_section_size);
 		aslr_section_offset = (random() % aslr_section_offset) * aslr_section_size;
 
+        // binary随机的ASLR
 		aslr_page_offset = random();
 		aslr_page_offset %= vm_map_get_max_aslr_slide_pages(map);
 		aslr_page_offset <<= vm_map_page_shift(map);
 
+        // dyld随机的ASLR
 		dyld_aslr_page_offset = random();
 		dyld_aslr_page_offset %= vm_map_get_max_loader_aslr_slide_pages(map);
 		dyld_aslr_page_offset <<= vm_map_page_shift(map);
@@ -425,6 +430,7 @@ load_machfile(
 	result->is_64bit_addr = ((imgp->ip_flags & IMGPF_IS_64BIT_ADDR) == IMGPF_IS_64BIT_ADDR);
 	result->is_64bit_data = ((imgp->ip_flags & IMGPF_IS_64BIT_DATA) == IMGPF_IS_64BIT_DATA);
 
+    // 解析mach-o
 	lret = parse_machfile(vp, map, thread, header, file_offset, macho_size,
 	                      0, aslr_page_offset, dyld_aslr_page_offset, result,
 			      NULL, imgp);
@@ -463,7 +469,8 @@ load_machfile(
 
 	/*
 	 * Check to see if the page zero is enforced by the map->min_offset.
-	 */ 
+	 */
+    // pagezero处理，64bit架构，默认4GB
 	if (enforce_hard_pagezero &&
 	    (vm_map_has_hard_pagezero(map, 0x1000) == FALSE)) {
 #if __arm64__
@@ -565,6 +572,9 @@ int macho_printf = 0;
  * "thread"==THREAD_NULL, do not make permament VM modifications,
  * just preflight the parse.
  */
+// * Mach-O解析，相关segment虚拟内存分配
+// * dyld的加载
+// * dyld的解析及虚拟内存分配
 static
 load_return_t
 parse_machfile(
@@ -622,10 +632,12 @@ parse_machfile(
 	/*
 	 *	Break infinite recursion
 	 */
+    // depth第一次调用时传入值为0
 	if (depth > 1) {
 		return(LOAD_FAILURE);
 	}
-
+    // depth负责`parse_machfile`遍历次数(2次)，第一次是解析mach-o，
+    // 第二次`load_dylinker`会调用次函数来进行dyld的解析。
 	depth++;
 
 	/*
@@ -666,6 +678,7 @@ parse_machfile(
 #endif /* CONFIG_EMBEDDED */
 
 		break;
+    // 如果filetype是dyld并且是第二次循环，那么设置is_dyld标记为TRUE
 	case MH_DYLINKER:
 		if (depth != 2) {
 			return (LOAD_FAILURE);
@@ -713,10 +726,16 @@ parse_machfile(
 	/*
 	 *	For PIE and dyld, slide everything by the ASLR offset.
 	 */
+    // 如果是dyld的解析，设置slide为传入的aslr_offset
 	if ((header->flags & MH_PIE) || is_dyld) {
 		slide = aslr_offset;
 	}
 
+    // 为了提升解析效率，在此分四次解析，如有每一步解析错误，则直接报错
+    // 0: 代码段和数据段是否对齐
+    // 1: uuid、代码签名等
+    // 2: segment
+    // 3: dyld，encryption，check entry point
 	/*
 	 *  Scan through the commands, processing each one as necessary.
 	 *  We parse in three passes through the headers:
@@ -801,6 +820,9 @@ parse_machfile(
 				 * it right after the main binary. If binresult == NULL, load
 				 * directly to the given slide.
 				 */
+                // dyld内存地址在ASLR加上Binary的max_vm_addr，也就是在Binary的最大的内存地址max_vm_addr
+                // 上加上随机的ASLR就是用户态的dyld所在的地址，那么这个max_vm_addr是多少呢,这个值是在load_segment()
+                // 函数中得出的。
 				slide = vm_map_round_page(slide + binresult->max_vm_addr, effective_page_mask);
 			}
 		}
@@ -829,6 +851,7 @@ parse_machfile(
 		 * run off the end of the reserved section by incrementing
 		 * the offset too far, so we are implicitly fail-safe.
 		 */
+        // 遍历load_command
 		offset = mach_header_sz;
 		ncmds = header->ncmds;
 
@@ -921,6 +944,7 @@ parse_machfile(
 					break;
 				}
 
+                // segment解析和内存映射
 				ret = load_segment(lcp,
 				                   header->filetype,
 				                   control,
@@ -1018,6 +1042,7 @@ parse_machfile(
 			case LC_LOAD_DYLINKER:
 				if (pass != 3)
 					break;
+                // depth = 1, 第一次进行mach-o解析，获取dylinker_command
 				if ((depth == 1) && (dlp == 0)) {
 					dlp = (struct dylinker_command *)lcp;
 					dlarchbits = (header->cputype & CPU_ARCH_MASK);
@@ -1100,6 +1125,7 @@ parse_machfile(
 			case LC_ENCRYPTION_INFO_64:
 				if (pass != 3)
 					break;
+                // 如果是加密过的binary，进行解密
 				ret = set_code_unprotect(
 					(struct encryption_info_command *) lcp,
 					addr, map, slide, vp, file_offset,
@@ -1179,6 +1205,8 @@ parse_machfile(
 			 * load the dylinker, and slide it by the independent DYLD ASLR
 			 * offset regardless of the PIE-ness of the main binary.
 			 */
+            // 第一次解析mach-o dlp会有赋值，进行dyld的加载。
+            // load_dylinker函数主要负责dyld的加载，解析等工作。
 			ret = load_dylinker(dlp, dlarchbits, map, thread, depth,
 					    dyld_aslr_offset, result, imgp);
 		}
@@ -2246,6 +2274,7 @@ struct macho_data {
 	} __header;
 };
 
+// dyld默认加载地址
 #define DEFAULT_DYLD_PATH "/usr/lib/dyld"
 
 #if (DEVELOPMENT || DEBUG)
@@ -2324,6 +2353,7 @@ load_dylinker(
 #endif
 
 #if !(DEVELOPMENT || DEBUG)
+    // 非内核debug模式下，会校验name是否和DEFAULT_DYLD_PATH相同，如果不同，直接报错
 	if (0 != strcmp(name, DEFAULT_DYLD_PATH)) {
 		return (LOAD_BADMACHO);
 	}
@@ -2335,7 +2365,8 @@ load_dylinker(
 	header = &dyld_data->__header;
 	myresult = &dyld_data->__myresult;
 	macho_data = &dyld_data->__macho_data;
-
+    
+    // 读取dyld
 	ret = get_macho_vnode(name, archbits, header,
 	    &file_offset, &macho_size, macho_data, &vp);
 	if (ret)
@@ -2345,6 +2376,7 @@ load_dylinker(
 	myresult->is_64bit_addr = result->is_64bit_addr;
 	myresult->is_64bit_data = result->is_64bit_data;
 
+    // 解析dyld
 	ret = parse_machfile(vp, map, thread, header, file_offset,
 	                     macho_size, depth, slide, 0, myresult, result, imgp);
 
