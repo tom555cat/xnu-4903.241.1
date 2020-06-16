@@ -827,6 +827,10 @@ static uint64_t get_va_fsid(struct vnode_attr *vap)
  *
  * TODO:	More gracefully handle failures after vfork
  */
+// * 为vfork生成新的线程(vfork生成进程不会生成线程)
+// * 把Mach-O映射进内存
+// * 签名、uid等权限处理，dyld相关的处理工作
+// * 释放资源
 static int
 exec_mach_imgact(struct image_params *imgp)
 {
@@ -1419,6 +1423,8 @@ struct execsw {
  *	<ex_imgact>:???			[anything an imgact can return]
  *	EDEADLK				Process is being terminated
  */
+// exec_activate_image函数会负责按照binary的格式分发映射内存的函数，
+// 目前格式有三种，单指令集binary，Fat binary，shell脚本。
 static int
 exec_activate_image(struct image_params *imgp)
 {
@@ -1505,9 +1511,9 @@ encapsulated_binary:
 		goto bad;
 	}
 	error = -1;
-    // 循环调用execsw相应的格式映射的加载函数进行加载
+    // 循环调用execsw相应的格式"映射的加载函数"进行加载，"ex_imgact"字段是函数。
 	for(i = 0; error == -1 && execsw[i].ex_imgact != NULL; i++) {
-
+        // 加载函数大概率是"exec_mach_imgact"
 		error = (*execsw[i].ex_imgact)(imgp);
 
 		switch (error) {
@@ -3472,6 +3478,7 @@ execve(proc_t p, struct execve_args *uap, int32_t *retval)
  *
  * TODO:	Dynamic linker header address on stack is copied via suword()
  */
+// __mac_execve函数会启动新进程和task，调用exec_activate_image。
 int
 __mac_execve(proc_t p, struct __mac_execve_args *uap, int32_t *retval)
 {
@@ -3484,6 +3491,7 @@ __mac_execve(proc_t p, struct __mac_execve_args *uap, int32_t *retval)
 	struct vfs_context context;
 	struct uthread	*uthread;
 	task_t old_task = current_task();
+    // 新的task
 	task_t new_task = NULL;
 	boolean_t should_release_proc_ref = FALSE;
 	boolean_t exec_done = FALSE;
@@ -5195,6 +5203,8 @@ load_init_program_at_path(proc_t p, user_addr_t scratch_addr, const char* path)
 	return execve(p, &init_exec_args, retval);
 }
 
+// 内核的debug模式下可以加载供调试的launchd，
+// 非debug模式下，只加载/sbin/launchd launched负责进程管理
 static const char * init_programs[] = {
 #if DEBUG
 	"/usr/local/sbin/launchd.debug",
@@ -5278,10 +5288,13 @@ load_init_program(proc_t p)
 	}
 #endif
 
+    // 加载初始化程序 init_programs数组遍历
     // init_programs: 在非debug模式下，只加载/sbin/launchd launchd负责进程管理
 	error = ENOENT;
 	for (i = 0; i < sizeof(init_programs)/sizeof(init_programs[0]); i++) {
 		printf("load_init_program: attempting to load %s\n", init_programs[i]);
+        // load_init_program_at_path会调用__mac_execve，__mac_execve函数会启动新进程和
+        // task，调用exec_activate_image。
 		error = load_init_program_at_path(p, (user_addr_t)scratch_addr, init_programs[i]);
 		if (!error) {
 			return;

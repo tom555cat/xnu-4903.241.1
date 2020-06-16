@@ -319,6 +319,10 @@ const int fourk_binary_compatibility_unsafe = TRUE;
 const int fourk_binary_compatibility_allow_wx = FALSE;
 #endif /* __arm64__ */
 
+// * load_machfile函数负责除了mach-O解析之外所有和加载相关的工作
+// 1> 为当前task分配可执行内存，task是一个任务实例，负责进程内的虚拟内存空间
+// 2> Mach-O和dyld ASLR的随机
+// 3> 为exec_mach_imgact回传结果
 load_return_t
 load_machfile(
 	struct image_params	*imgp,
@@ -678,7 +682,8 @@ parse_machfile(
 #endif /* CONFIG_EMBEDDED */
 
 		break;
-    // 如果filetype是dyld并且是第二次循环，那么设置is_dyld标记为TRUE
+    // 如果filetype是dyld并且是第二次循环，那么设置is_dyld标记为TRUE。
+    // 第一次应该是可执行文件。
 	case MH_DYLINKER:
 		if (depth != 2) {
 			return (LOAD_FAILURE);
@@ -2291,6 +2296,7 @@ static uint64_t get_va_fsid(struct vnode_attr *vap)
 	}
 }
 
+// 负责dyld的加载和解析等工作
 static load_return_t
 load_dylinker(
 	struct dylinker_command	*lcp,
